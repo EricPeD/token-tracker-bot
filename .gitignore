@@ -1,0 +1,36 @@
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# generado con ia
+# Entorno virtual
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+
+# IDEs y editores
+.idea/
+.vscode/
+*.sublime-*
+.DS_Store
+
+# Notas personales (pero mantener ROADMAP visible)
+notes-token-tracker-bot/
+!notes-token-tracker-bot/
+!notes-token-tracker-bot/ROADMAP.md
+
+# Otros
+*.log
+.coverage
+htmlcov/
+.pytest_cache/
+.ruff_cache/

@@ -1,0 +1,26 @@
+aiohappyeyeballs==2.6.1
+aiohttp==3.13.2
+aiosignal==1.4.0
+annotated-types==0.7.0
+anyio==4.11.0
+attrs==25.4.0
+certifi==2025.11.12
+frozenlist==1.8.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.11
+multidict==6.7.0
+propcache==0.4.1
+pydantic==2.12.4
+pydantic-settings==2.12.0
+pydantic_core==2.41.5
+python-dotenv==1.2.1
+python-telegram-bot==22.5
+sniffio==1.3.1
+structlog==25.5.0
+tenacity==9.1.2
+-e git+ssh://git@github.com/EricPeD/token-tracker-bot.git@e56c122f2d76edcdd5bcaac5d1d03a6c65e03aa7#egg=token_tracker_bot
+typing-inspection==0.4.2
+typing_extensions==4.15.0
+yarl==1.22.0

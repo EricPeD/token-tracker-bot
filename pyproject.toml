@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "token-tracker-bot"
+version = "0.1.0"
+description = "Telegram bot for tracking ERC-20 deposits on Polygon"
+dependencies = [
+    "python-telegram-bot>=20.7",
+    "aiohttp>=3.9",
+    "pydantic-settings>=2.0",
+    "tenacity>=8.2",
+    "structlog>=23.1"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.21",
+    "ruff>=0.1",
+    "black>=23.0"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bot"]
