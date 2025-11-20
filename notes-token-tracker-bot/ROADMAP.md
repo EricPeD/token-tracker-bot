@@ -1,3 +1,11 @@
+- - -
+
+- [ ] Moralis Wallet History API funcionando con parsing robusto
+- [ ] Añadir @tenacity para retry automático (post-MVP)
+- [ ] Documentación con Sphinx (post-MVP)
+
+- - -
+
 **Fase 0: Research & Setup (hecho-ish, 1-2 días más)**
 
 - Research APIs: Probado Etherscan V2, pivot a Moralis (key generada). Crítica: Moralis free hasta 1M req/mes –¿suficiente para uso personal? Sí, pero monitoriza usage en dashboard. Fuente: [Moralis Pricing](https://moralis.io/pricing/).
@@ -6,6 +14,7 @@
 - Tech setup: Deps instaladas (aiohttp, etc.). 
   Nota: Usa pip install -e .[dev] para extras como pytest.
 - Trade-off: Moralis over Etherscan –pros: simpler parsing; contras: learning curve si cambias provider. ¿Seguro no fallback a Etherscan? No, enfócate.
+- Trade-off: Moralis vs Etherscan –pros Moralis (formatted); contras (bugs como field names).
 
 **Fase 1: MVP (3-5 días, hoy terminamos basics)**
 
@@ -32,3 +41,5 @@
 - Export: CSV reports.
 - Nice-to-have: ERC-721 support (similar, pero parse tokenId).
 - Trade-off: Features extras vs focus
+
+- - -
