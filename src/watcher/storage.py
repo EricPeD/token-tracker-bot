@@ -1,54 +1,44 @@
 # src/watcher/storage.py
-import sqlite3
-import os
 from typing import Optional, List, Dict
+from sqlalchemy import select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
+# No longer importing AsyncSessionLocal, User, LastTx globally here
+# These will be passed via session_factory or imported within methods if needed
+from src.models import (
+    LastTx,
+)  # Import only models needed for type hinting/ORM operations
 
 DB_FILE = "tx_storage.db"
 
+
 class TxStorage:
-    def __init__(self, user_id: int = 0):
+    def __init__(self, user_id: int):
         self.user_id = user_id
-        self.conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-        self.cursor = self.conn.cursor()
-        self._create_table()
 
-    def _create_table(self):
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS last_tx (
-                user_id INTEGER PRIMARY KEY,
-                last_timestamp TEXT
-            )
-        """)
-        self.conn.commit()
+    async def load_last(self, session: AsyncSession) -> Optional[str]:
+        result = await session.execute(
+            select(LastTx.last_timestamp).where(LastTx.user_id == self.user_id)
+        )
+        return result.scalar_one_or_none()
 
-    def load_last(self) -> Optional[str]:
-        self.cursor.execute("SELECT last_timestamp FROM last_tx WHERE user_id = ?", (self.user_id,))
-        row = self.cursor.fetchone()
-        return row[0] if row else None
+    async def save_last(self, session: AsyncSession, timestamp: str):
+        last_tx = await session.get(LastTx, self.user_id)
+        if last_tx:
+            last_tx.last_timestamp = timestamp
+        else:
+            last_tx = LastTx(user_id=self.user_id, last_timestamp=timestamp)
+            session.add(last_tx)
 
-    def save_last(self, timestamp: str):
-        self.cursor.execute("""
-            INSERT OR REPLACE INTO last_tx (user_id, last_timestamp) VALUES (?, ?)
-        """, (self.user_id, timestamp))
-        self.conn.commit()
-
-    def filter_new(self, deposits: List[Dict]) -> List[Dict]:
-        last = self.load_last()
+    async def filter_new(
+        self, session: AsyncSession, deposits: List[Dict]
+    ) -> List[Dict]:
+        last = await self.load_last(session)
         if not last:
             return deposits
         return [d for d in deposits if d["block_timestamp"] > last]
 
-    def reset(self):
-        """Reset para desarrollo: borra tu registro y el archivo físico"""
-        self.cursor.execute("DELETE FROM last_tx WHERE user_id = ?", (self.user_id,))
-        self.conn.commit()
-        
-        try:
-            self.conn.close()
-            if os.path.exists(DB_FILE):
-                os.remove(DB_FILE)
-                print("DB BORRADA FÍSICAMENTE - reset completo")
-        except Exception as e:
-            print(f"Error: {e}")
-        
+    async def reset(self, session: AsyncSession):
+        """Reset: borra tu registro de last_tx"""
+        await session.execute(delete(LastTx).where(LastTx.user_id == self.user_id))
         print(f"RESET COMPLETADO → user_id {self.user_id}")

@@ -23,4 +23,12 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/bot"]
+packages = ["src"]
+
+
+
+[tool.pytest.ini_options]
+pythonpath = ["." ]
+
+testpaths = ["tests"]
+asyncio_mode = "auto"
