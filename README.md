@@ -10,9 +10,9 @@ Bot de Telegram para notificaciones en tiempo real de depósitos de tokens ERC-2
 
 ## 🚀 Descripción del Proyecto
 
-El **Token Tracker Bot** es una herramienta robusta y escalable diseñada para monitorizar direcciones de wallet en la red Polygon y notificar a múltiples usuarios sobre depósitos de tokens ERC-20 específicos. Evolucionó de un prototipo básico a una aplicación con soporte multi-usuario, persistencia de datos y alta fiabilidad, asegurando que cada usuario reciba notificaciones precisas y oportunas de sus transacciones.
+El **Token Tracker Bot** es una herramienta robusta y escalable diseñada para monitorizar **una única dirección de wallet** en la red Polygon y notificar a múltiples usuarios sobre depósitos de tokens ERC-20 específicos. Evolucionó de un prototipo básico a una aplicación con soporte multi-usuario, persistencia de datos y alta fiabilidad, asegurando que cada usuario reciba notificaciones precisas y oportunas de sus transacciones.
 
-**Propósito:** Proporcionar a los usuarios de Telegram un sistema automatizado para rastrear y recibir alertas instantáneas sobre la entrada de tokens ERC-20 en sus wallets de Polygon.
+**Propósito:** Proporcionar a los usuarios de Telegram un sistema automatizado para rastrear y recibir alertas instantáneas sobre la entrada de tokens ERC-20 en **su wallet configurada** de Polygon.
 
 ## ✨ Características Principales
 
@@ -22,12 +22,12 @@ El bot ofrece una serie de comandos intuitivos para interactuar con él:
 
 *   `/start`: Inicia la conversación con el bot y muestra un mensaje de bienvenida.
 *   `/help`: Muestra una lista detallada de todos los comandos disponibles y su uso.
-*   `/setwallet <direccion>`: Configura tu dirección de wallet de Polygon para que el bot la monitorice.
+*   `/setwallet <direccion>`: Configura tu dirección de wallet de Polygon para que el bot la monitorice. **Ten en cuenta que esto reemplazará cualquier wallet configurada previamente.**
 *   `/wallet`: Muestra la dirección de wallet que tienes configurada actualmente.
-*   `/addtoken <direccion_contrato>`: Añade un token ERC-20 específico (por su dirección de contrato) a tu lista de monitoreo.
-*   `/tokens`: Muestra una lista de todos los tokens que tienes configurados para monitorizar.
-*   `/check`: Ejecuta una comprobación manual de nuevos depósitos para tu wallet y tokens monitorizados.
-*   `/stats`: Muestra un resumen de tus depósitos totales, agrupados por token.
+*   `/addtoken <direccion_contrato>`: Añade un token ERC-20 específico (por su dirección de contrato) a la lista de monitoreo de **tu wallet configurada**.
+*   `/tokens`: Muestra una lista de todos los tokens que tienes configurados para monitorizar en **tu wallet actual**.
+*   `/check`: Ejecuta una comprobación manual de nuevos depósitos para **tu wallet y tokens monitorizados**.
+*   `/stats`: Muestra un resumen de tus depósitos totales, agrupados por token, para **tu wallet configurada**.
 *   `/reset`: Borra el registro de la última transacción vista (útil para pruebas, forzando notificaciones de transacciones antiguas).
 
 ### Funcionalidades Clave
@@ -39,6 +39,14 @@ El bot ofrece una serie de comandos intuitivos para interactuar con él:
     *   **Paginación:** Manejo eficiente de grandes volúmenes de datos para evitar la pérdida de transacciones.
     *   **Reintentos Automáticos:** Utiliza `tenacity` para reintentar llamadas a la API en caso de fallos transitorios de red o servicio.
 *   **Gestión Asíncrona Eficiente:** Construido sobre `asyncio` de Python y con `SQLAlchemy` asíncrono para operaciones de base de datos no bloqueantes.
+
+### Limitaciones Actuales
+
+Es importante destacar las limitaciones actuales del bot:
+
+*   **Una Sola Wallet por Usuario:** Actualmente, cada usuario solo puede configurar y monitorizar una única dirección de wallet. Al usar `/setwallet`, cualquier dirección configurada previamente es reemplazada.
+*   **Red Fija (Polygon):** Las operaciones del bot (monitoreo de depósitos, balances) están centradas exclusivamente en la red Polygon. No hay soporte nativo para monitorear tokens o wallets en otras redes blockchain simultáneamente.
+
 
 ## 🏛️ Arquitectura 
 
@@ -144,6 +152,22 @@ El proyecto está en constante evolución. Aquí se detallan algunas áreas clav
 *   [ ] Crear un `Dockerfile` para contenerizar la aplicación.
 *   [ ] Configurar un pipeline de CI/CD básico con GitHub Actions (linter, tests).
 *   **Nota:** La resolución de `telegram.error.Conflict` (problema operacional al desplegar si hay otra instancia del bot activa) sigue siendo una preocupación de alta prioridad para un despliegue estable.
+
+### Fase 5: Soporte Multi-Wallet y Multi-Chain (Major Feature)
+
+*   [ ] **Rediseño del Esquema de la Base de Datos:**
+    *   Introducir un nuevo modelo `Wallet` (`id`, `user_id`, `address`, `chain_id`).
+    *   Modificar los modelos `UserToken` y `Transaction` para vincularse a `Wallet` en lugar de directamente a `User`.
+    *   Añadir `chain_id` a `UserToken` y `Transaction`.
+    *   Actualizar `LastTx` para guardar el último timestamp por wallet y chain.
+*   [ ] **Modificación de la Lógica de Integración con APIs Externas (Moralis):**
+    *   Adaptar `get_myst_deposits` y `get_wallet_token_balances` para aceptar `chain_id` dinámicamente, permitiendo consultar datos de diferentes redes.
+*   [ ] **Rediseño de los Comandos del Bot:**
+    *   Introducir nuevos comandos como `/addwallet <address> <chain>` y `/removewallet`.
+    *   Permitir a los usuarios seleccionar una wallet activa o especificar la wallet/chain para comandos como `/addtoken`, `/check`, `/stats`.
+    *   Implementar un comando `/listwallets` para mostrar las wallets configuradas.
+*   [ ] **Mecanismo de Configuración de Cadenas:**
+    *   Permitir la configuración de las cadenas soportadas, sus nombres y sus equivalentes en las APIs externas (ej., "polygon" para Moralis).
 
 ## 🙌 Contribuciones
 
