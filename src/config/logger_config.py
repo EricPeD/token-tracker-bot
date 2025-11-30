@@ -31,7 +31,7 @@ def setup_logging():
 
     # File Handler (for more persistent logs with daily rotation)
     file_handler = TimedRotatingFileHandler(
-        log_file_path, when='midnight', interval=1, backupCount=7, encoding="utf-8"
+        log_file_path, when="midnight", interval=1, backupCount=7, encoding="utf-8"
     )
     file_handler.setLevel(log_level)
     file_formatter = logging.Formatter(

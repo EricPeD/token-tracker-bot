@@ -1,8 +1,8 @@
 import aiohttp
 import asyncio
 from telegram.ext import Application
-from telegram import Bot
-from src.bot.handlers import get_handlers
+from telegram import Bot, BotCommand  # Importar BotCommand
+from src.bot.handlers import get_handlers, BOT_COMMANDS  # Importar BOT_COMMANDS
 from src.config.settings import settings
 from src.models import engine, Base, User, AsyncSessionLocal, UserToken, Transaction
 from src.watcher.moralis import get_myst_deposits
@@ -19,7 +19,9 @@ async def init_db():
     logger.info("Base de datos inicializada.")
 
 
-async def polling_job(bot: Bot, poll_interval: int, client_session: aiohttp.ClientSession):
+async def polling_job(
+    bot: Bot, poll_interval: int, client_session: aiohttp.ClientSession
+):
     """Tarea en segundo plano para el sondeo periódico de depósitos."""
     while True:
         logger.info("Ejecutando sondeo automático...")
@@ -174,7 +176,9 @@ async def polling_job(bot: Bot, poll_interval: int, client_session: aiohttp.Clie
 async def main():
     logger.info("Iniciando Token Tracker Bot...")
     await init_db()  # Inicializar la base de datos
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as client_session:
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=30)
+    ) as client_session:
         app = Application.builder().token(settings.telegram_token).build()
 
         # Crear una instancia de Bot para el polling_job
@@ -188,8 +192,16 @@ async def main():
         await app.start()
         logger.info("Telegram bot iniciado (polling para comandos).")
 
+        # Establecer los comandos del bot para el menú de Telegram
+        await app.bot.set_my_commands(
+            [BotCommand(cmd["command"], cmd["description"]) for cmd in BOT_COMMANDS]
+        )
+        logger.info("Comandos del bot establecidos en el menú de Telegram.")
+
         # Iniciar la tarea de sondeo en segundo plano
-        asyncio.create_task(polling_job(bot_instance, settings.poll_interval, client_session))
+        asyncio.create_task(
+            polling_job(bot_instance, settings.poll_interval, client_session)
+        )
         logger.info(
             f"Tarea de sondeo en segundo plano iniciada con intervalo de {settings.poll_interval} segundos."
         )

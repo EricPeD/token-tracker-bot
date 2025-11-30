@@ -1,5 +1,5 @@
 import aiohttp
-import json # Importar json para JsonDecodeError
+import json  # Importar json para JsonDecodeError
 from src.config.settings import settings
 from typing import List, Dict, Any
 from tenacity import (
@@ -10,7 +10,7 @@ from tenacity import (
 )
 from aiohttp import ClientError, ClientResponseError
 import asyncio
-from src.config.logger_config import logger # Importar el logger
+from src.config.logger_config import logger  # Importar el logger
 
 MORALIS_BASE = "https://deep-index.moralis.io/api/v2.2"
 
@@ -28,7 +28,9 @@ MORALIS_BASE = "https://deep-index.moralis.io/api/v2.2"
     ),
 )
 async def get_myst_deposits(
-    wallet_address: str, token_addresses_to_monitor: List[str], client_session: aiohttp.ClientSession
+    wallet_address: str,
+    token_addresses_to_monitor: List[str],
+    client_session: aiohttp.ClientSession,
 ) -> List[Dict[Any, Any]]:
     """
     Obtiene todos los depósitos entrantes para tokens específicos en una wallet
@@ -42,7 +44,9 @@ async def get_myst_deposits(
 
     all_transactions = []
     cursor = None
-    page_limit = 50  # Aumentar el límite de la página para obtener más transacciones por llamada
+    page_limit = (
+        50  # Aumentar el límite de la página para obtener más transacciones por llamada
+    )
 
     while True:
         params = {
@@ -54,7 +58,9 @@ async def get_myst_deposits(
             params["cursor"] = cursor
         logger.debug(f"Moralis - get_myst_deposits: Request Params: {params}")
 
-        async with client_session.get(url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+        async with client_session.get(
+            url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=30)
+        ) as resp:
             logger.debug(f"Moralis - get_myst_deposits: Response Status: {resp.status}")
             if resp.status != 200:
                 text = await resp.text()
@@ -71,10 +77,15 @@ async def get_myst_deposits(
                 )
             try:
                 data = await resp.json()
-                logger.debug(f"Moralis - get_myst_deposits: Response Data: {json.dumps(data)}")
+                logger.debug(
+                    f"Moralis - get_myst_deposits: Response Data: {json.dumps(data)}"
+                )
             except json.JSONDecodeError as e:
                 text = await resp.text()
-                logger.error(f"Error decodificando JSON de Moralis en get_myst_deposits: {e}. Respuesta: {text}", exc_info=True)
+                logger.error(
+                    f"Error decodificando JSON de Moralis en get_myst_deposits: {e}. Respuesta: {text}",
+                    exc_info=True,
+                )
                 raise ClientError("Error de formato JSON de Moralis") from e
 
             all_transactions.extend(data.get("result", []))
@@ -91,11 +102,13 @@ async def get_myst_deposits(
         for erc20_transfer in tx.get("erc20_transfers", []):
             # Es un depósito si to_address coincide con nuestra wallet_address
             # y el token está en nuestra lista de monitorización
-            if (
-                erc20_transfer.get("to_address", "").lower() == wallet_address.lower()
-                and erc20_transfer.get("address", "").lower()
-                in [addr.lower() for addr in token_addresses_to_monitor]
-            ):
+            if erc20_transfer.get(
+                "to_address", ""
+            ).lower() == wallet_address.lower() and erc20_transfer.get(
+                "address", ""
+            ).lower() in [
+                addr.lower() for addr in token_addresses_to_monitor
+            ]:
                 processed_deposits.append(
                     {
                         "hash": tx_hash,
@@ -146,8 +159,12 @@ async def get_wallet_token_balances(
             params["cursor"] = cursor
         logger.debug(f"Moralis - get_wallet_token_balances: Request Params: {params}")
 
-        async with client_session.get(url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-            logger.debug(f"Moralis - get_wallet_token_balances: Response Status: {resp.status}")
+        async with client_session.get(
+            url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=30)
+        ) as resp:
+            logger.debug(
+                f"Moralis - get_wallet_token_balances: Response Status: {resp.status}"
+            )
             if resp.status != 200:
                 text = await resp.text()
                 logger.error(
@@ -163,10 +180,15 @@ async def get_wallet_token_balances(
                 )
             try:
                 data = await resp.json()
-                logger.debug(f"Moralis - get_wallet_token_balances: Response Data: {json.dumps(data)}")
+                logger.debug(
+                    f"Moralis - get_wallet_token_balances: Response Data: {json.dumps(data)}"
+                )
             except json.JSONDecodeError as e:
                 text = await resp.text()
-                logger.error(f"Error decodificando JSON de Moralis en get_wallet_token_balances: {e}. Respuesta: {text}", exc_info=True)
+                logger.error(
+                    f"Error decodificando JSON de Moralis en get_wallet_token_balances: {e}. Respuesta: {text}",
+                    exc_info=True,
+                )
                 raise ClientError("Error de formato JSON de Moralis") from e
 
             all_tokens.extend(data.get("result", []))
@@ -187,7 +209,9 @@ async def get_wallet_token_balances(
         | retry_if_exception_type(asyncio.TimeoutError)
     ),
 )
-async def get_wallet_net_worth(wallet_address: str, client_session: aiohttp.ClientSession) -> str:
+async def get_wallet_net_worth(
+    wallet_address: str, client_session: aiohttp.ClientSession
+) -> str:
     """
     Obtiene el valor neto total en USD de una wallet.
     """
@@ -200,7 +224,9 @@ async def get_wallet_net_worth(wallet_address: str, client_session: aiohttp.Clie
     logger.debug(f"Moralis - get_wallet_net_worth: Request URL: {url}")
     logger.debug(f"Moralis - get_wallet_net_worth: Request Params: {params}")
 
-    async with client_session.get(url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+    async with client_session.get(
+        url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=30)
+    ) as resp:
         logger.debug(f"Moralis - get_wallet_net_worth: Response Status: {resp.status}")
         if resp.status != 200:
             text = await resp.text()
@@ -218,10 +244,60 @@ async def get_wallet_net_worth(wallet_address: str, client_session: aiohttp.Clie
 
         try:
             data = await resp.json()
-            logger.debug(f"Moralis - get_wallet_net_worth: Response Data: {json.dumps(data)}") # Usar json.dumps
+            logger.debug(
+                f"Moralis - get_wallet_net_worth: Response Data: {json.dumps(data)}"
+            )  # Usar json.dumps
         except json.JSONDecodeError as e:
             text = await resp.text()
-            logger.error(f"Error decodificando JSON de Moralis en get_wallet_net_worth: {e}. Respuesta: {text}", exc_info=True)
+            logger.error(
+                f"Error decodificando JSON de Moralis en get_wallet_net_worth: {e}. Respuesta: {text}",
+                exc_info=True,
+            )
             raise ClientError("Error de formato JSON de Moralis") from e
-            
+
         return data.get("total_networth_usd", "0")
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    retry=(
+        retry_if_exception_type(ClientResponseError)
+        | retry_if_exception_type(ClientError)
+        | retry_if_exception_type(asyncio.TimeoutError)
+    ),
+)
+async def get_token_metadata(
+    wallet_address: str, token_address: str, client_session: aiohttp.ClientSession
+) -> Dict[str, Any] | None:
+    """
+    Obtiene los metadatos de un token ERC20 específico buscando
+    dentro de los balances de la wallet.
+    Este método es más fiable que el endpoint /erc20/{address}/metadata
+    que a veces no encuentra tokens válidos.
+    """
+    logger.debug(
+        f"Buscando metadatos para token {token_address} en la wallet {wallet_address}"
+    )
+
+    # Re-use the existing, reliable function
+    all_balances = await get_wallet_token_balances(wallet_address, client_session)
+
+    if not all_balances:
+        logger.warning(
+            f"No se obtuvieron balances para la wallet {wallet_address}, no se pueden encontrar metadatos."
+        )
+        return None
+
+    # Find the specific token in the list
+    for token_data in all_balances:
+        if token_data.get("token_address", "").lower() == token_address.lower():
+            logger.debug(
+                f"Metadatos encontrados para {token_address} via balances: {token_data}"
+            )
+            return token_data
+
+    logger.warning(
+        f"No se encontraron metadatos para el token {token_address} en los balances de la wallet."
+    )
+    return None

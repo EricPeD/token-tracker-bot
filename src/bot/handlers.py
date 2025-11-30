@@ -1,7 +1,12 @@
-import asyncio
 import aiohttp
 from telegram import Update
-from telegram.ext import CommandHandler, ContextTypes
+from telegram.ext import (
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 from functools import partial
 from src.models import (
     AsyncSessionLocal,
@@ -13,12 +18,56 @@ from src.watcher.storage import TxStorage
 from src.watcher.moralis import (
     get_myst_deposits,
     get_wallet_token_balances,
+    get_token_metadata,
 )
 from src.utils.format import format_deposit_msg, escape_md2
-from sqlalchemy import select
+from sqlalchemy import select, func
 import re
 from decimal import Decimal
 from src.config.logger_config import logger  # Importar el logger
+
+# Definir estados para conversaciones
+ADDTOKEN_CUSTOM_SYMBOL = 1
+REMOVETOKEN_CONFIRM_ALL = 2
+
+# Lista de comandos para el menú de Telegram y el mensaje de ayuda
+BOT_COMMANDS = [
+    {
+        "command": "start",
+        "description": "Inicia el bot y muestra un mensaje de bienvenida.",
+    },
+    {"command": "help", "description": "Muestra esta lista de comandos."},
+    {
+        "command": "setwallet",
+        "description": "Configura la dirección de tu wallet para monitorizar.",
+    },
+    {"command": "wallet", "description": "Muestra tu dirección de wallet configurada."},
+    {"command": "addtoken", "description": "Añade un token ERC-20 para monitorizar."},
+    {
+        "command": "removetoken",
+        "description": "Elimina un token (o todos) de tu lista.",
+    },
+    {
+        "command": "tokens",
+        "description": "Muestra la lista de tokens que estás monitorizando.",
+    },
+    {
+        "command": "check",
+        "description": "Comprueba manualmente si hay nuevos depósitos para tu wallet y tokens monitorizados.",
+    },
+    {
+        "command": "stats",
+        "description": "Muestra un resumen de tus depósitos totales por token.",
+    },
+    {
+        "command": "reset",
+        "description": "Resetea el almacenamiento de la última transacción vista (solo para pruebas).",
+    },
+    {
+        "command": "cancel",
+        "description": "Cancela cualquier operación en curso.",
+    },  # Añadido /cancel a la lista de comandos
+]
 
 # Patrón regex para validar una dirección ERC-20 (0x + 40 caracteres hexadecimales)
 ERC20_ADDRESS_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
@@ -73,67 +122,287 @@ async def set_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-async def add_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_token_start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    client_session: aiohttp.ClientSession,
+):
     user_id = update.effective_user.id
     logger.info(
-        f"Comando /addtoken recibido de usuario {user_id} con args: {context.args}"
+        f"Comando /addtoken (inicio conversación) recibido de usuario {user_id} con args: {context.args}"
     )
 
     if len(context.args) != 1:
-        logger.warning(
-            f"Uso incorrecto de /addtoken por {user_id}. Args: {context.args}"
-        )
         await update.message.reply_text("Uso: /addtoken <contract_address>")
-        return
+        return ConversationHandler.END
 
     token_address = context.args[0].lower()
 
     if not ERC20_ADDRESS_PATTERN.match(token_address):
-        logger.warning(
-            f"Dirección de token inválida '{token_address}' proporcionada por {user_id}"
-        )
         await update.message.reply_text(
             "❌ Dirección de contrato inválida. Asegúrate de que sea una dirección Ethereum/Polygon ERC-20 válida (ej. 0x...)."
         )
-        return
+        return ConversationHandler.END
 
     try:
         async with AsyncSessionLocal() as session:
             user = await session.get(User, user_id)
             if not user:
-                logger.info(
-                    f"Usuario {user_id} intentó /addtoken sin wallet configurada."
-                )
                 await update.message.reply_text(
                     "Primero debes configurar tu wallet con /setwallet."
                 )
-                return
+                return ConversationHandler.END
 
             existing_token = await session.get(UserToken, (user_id, token_address))
             if existing_token:
-                logger.info(f"Usuario {user_id} ya monitoriza el token {token_address}")
-                await update.message.reply_text(
-                    f"Ya estás monitorizando el token: {token_address}"
+                display_symbol = (
+                    existing_token.token_symbol
+                    if existing_token.token_symbol
+                    else token_address
                 )
-                return
+                await update.message.reply_text(
+                    f"Ya estás monitorizando el token: {display_symbol} ({token_address})"
+                )
+                return ConversationHandler.END
 
-            new_user_token = UserToken(user_id=user_id, token_address=token_address)
+            try:
+                # Pasar la wallet_address del usuario a la función
+                metadata = await get_token_metadata(
+                    user.wallet_address, token_address, client_session
+                )
+                if metadata and metadata.get("symbol"):
+                    token_symbol = metadata["symbol"]
+                    logger.debug(
+                        f"Metadatos del token {token_address} obtenidos: {metadata}. Símbolo: {token_symbol}"
+                    )
+
+                    new_user_token = UserToken(
+                        user_id=user_id,
+                        token_address=token_address,
+                        token_symbol=token_symbol,
+                    )
+                    session.add(new_user_token)
+                    await session.commit()
+                    logger.info(
+                        f"Token {token_symbol} ({token_address}) añadido para monitorización por {user_id}."
+                    )
+                    await update.message.reply_text(
+                        f"✅ Token {token_symbol} ({token_address}) añadido para monitorización."
+                    )
+                    return ConversationHandler.END
+                else:
+                    logger.warning(
+                        f"No se pudieron obtener metadatos para {token_address}. Pidiendo símbolo personalizado."
+                    )
+                    context.user_data["add_token_address"] = token_address
+                    await update.message.reply_text(
+                        "⚠️ No se pudo encontrar el símbolo para el token. \n\n"
+                        "Por favor, introduce un nombre personalizado para este token (máx. 10 caracteres) o envía /cancel para cancelar."
+                    )
+                    return ADDTOKEN_CUSTOM_SYMBOL
+
+            except Exception as e:
+                logger.error(
+                    f"Error al obtener metadatos para {token_address}: {e}",
+                    exc_info=True,
+                )
+                await update.message.reply_text(
+                    f"❌ Error al verificar el token {token_address}. Inténtalo de nuevo."
+                )
+                return ConversationHandler.END
+
+    except Exception as e:
+        logger.error(
+            f"Error en add_token_start para usuario {user_id}: {e}", exc_info=True
+        )
+        await update.message.reply_text(
+            "❌ Error al iniciar el proceso de añadir token. Inténtalo de nuevo."
+        )
+        return ConversationHandler.END
+
+
+async def add_token_custom_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    token_address = context.user_data.get("add_token_address")
+    custom_symbol = update.message.text
+
+    logger.info(
+        f"Símbolo personalizado '{custom_symbol}' recibido de {user_id} para el token {token_address}"
+    )
+
+    if not token_address:
+        await update.message.reply_text(
+            "Ha ocurrido un error, por favor inicia de nuevo con /addtoken."
+        )
+        return ConversationHandler.END
+
+    if len(custom_symbol) > 10:
+        await update.message.reply_text(
+            "El nombre es demasiado largo (máx. 10 caracteres). Por favor, inténtalo de nuevo o envía /cancel."
+        )
+        return ADDTOKEN_CUSTOM_SYMBOL
+
+    try:
+        async with AsyncSessionLocal() as session:
+            new_user_token = UserToken(
+                user_id=user_id,
+                token_address=token_address,
+                token_symbol=custom_symbol.upper(),
+            )
             session.add(new_user_token)
             await session.commit()
             logger.info(
-                f"Token {token_address} añadido para monitorización por {user_id}."
+                f"Token {custom_symbol.upper()} ({token_address}) añadido para monitorización por {user_id}."
             )
-        await update.message.reply_text(
-            f"Token {token_address} añadido para monitorización."
-        )
+            await update.message.reply_text(
+                f"✅ Token {custom_symbol.upper()} ({token_address}) añadido con tu nombre personalizado."
+            )
     except Exception as e:
-        logger.error(f"Error en add_token para usuario {user_id}: {e}", exc_info=True)
+        logger.error(
+            f"Error en add_token_custom_symbol para usuario {user_id}: {e}",
+            exc_info=True,
+        )
         await update.message.reply_text(
-            "❌ Error al añadir el token. Inténtalo de nuevo."
+            "❌ Error al guardar el token. Inténtalo de nuevo con /addtoken."
+        )
+    finally:
+        # Limpiar user_data
+        if "add_token_address" in context.user_data:
+            del context.user_data["add_token_address"]
+
+    return ConversationHandler.END
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    logger.info(f"Usuario {user_id} ha cancelado una operación.")
+
+    # Limpieza genérica de datos de conversación
+    if "add_token_address" in context.user_data:
+        del context.user_data["add_token_address"]
+
+    await update.message.reply_text("Operación cancelada.")
+    return ConversationHandler.END
+
+
+async def remove_token_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    logger.info(
+        f"Comando /removetoken (inicio conversación) recibido de usuario {user_id} con args: {context.args}"
+    )
+
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /removetoken <contract_address> o /removetoken all"
+        )
+        return ConversationHandler.END
+
+    arg = context.args[0].lower()
+
+    if arg == "all":
+        async with AsyncSessionLocal() as session:
+            count = await session.scalar(
+                select(func.count(UserToken.token_address)).where(
+                    UserToken.user_id == user_id
+                )
+            )
+            if count == 0:
+                await update.message.reply_text("No estás monitorizando ningún token.")
+                return ConversationHandler.END
+
+        await update.message.reply_text(
+            f"⚠️ ¿Estás seguro de que quieres eliminar tus {count} tokens monitorizados? Esta acción no se puede deshacer.\n\n"
+            "Responde 'sí' para confirmar, o /cancel para anular."
+        )
+        return REMOVETOKEN_CONFIRM_ALL
+
+    # Lógica para eliminar un solo token
+    token_address = arg
+    if not ERC20_ADDRESS_PATTERN.match(token_address):
+        await update.message.reply_text(
+            "❌ Dirección de contrato inválida. Asegúrate de que sea una dirección Ethereum/Polygon ERC-20 válida (ej. 0x...)."
+        )
+        return ConversationHandler.END
+
+    try:
+        async with AsyncSessionLocal() as session:
+            token_to_delete = await session.get(UserToken, (user_id, token_address))
+            if token_to_delete:
+                token_symbol = token_to_delete.token_symbol or token_address
+                await session.delete(token_to_delete)
+                await session.commit()
+                logger.info(
+                    f"Token {token_symbol} ({token_address}) eliminado para el usuario {user_id}."
+                )
+                await update.message.reply_text(
+                    f"✅ Token {token_symbol} ({token_address}) eliminado de tu lista."
+                )
+            else:
+                logger.info(
+                    f"Usuario {user_id} intentó eliminar el token {token_address} pero no lo estaba monitorizando."
+                )
+                await update.message.reply_text(
+                    f"No estás monitorizando el token: {token_address}"
+                )
+    except Exception as e:
+        logger.error(
+            f"Error en remove_token (single) para usuario {user_id}: {e}", exc_info=True
+        )
+        await update.message.reply_text(
+            "❌ Error al eliminar el token. Inténtalo de nuevo."
         )
 
+    return ConversationHandler.END
 
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE, client_session: aiohttp.ClientSession):
+
+async def remove_all_tokens_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if update.message.text.lower() != "si":
+        await update.message.reply_text(
+            "Operación cancelada. Tus tokens no han sido eliminados."
+        )
+        return ConversationHandler.END
+
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(UserToken).where(UserToken.user_id == user_id)
+            )
+            tokens_to_delete = result.scalars().all()
+
+            if not tokens_to_delete:
+                await update.message.reply_text("No tenías tokens para eliminar.")
+                return ConversationHandler.END
+
+            for token in tokens_to_delete:
+                await session.delete(token)
+
+            await session.commit()
+            logger.info(
+                f"Todos los tokens han sido eliminados para el usuario {user_id}."
+            )
+            await update.message.reply_text(
+                "✅ Todos tus tokens monitorizados han sido eliminados."
+            )
+
+    except Exception as e:
+        logger.error(
+            f"Error en remove_all_tokens_confirm para usuario {user_id}: {e}",
+            exc_info=True,
+        )
+        await update.message.reply_text(
+            "❌ Error al eliminar tus tokens. Inténtalo de nuevo."
+        )
+
+    return ConversationHandler.END
+
+
+async def stats(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    client_session: aiohttp.ClientSession,
+):
     user_id = update.effective_user.id
     logger.info(f"Comando /stats recibido de usuario {user_id}")
     try:
@@ -165,9 +434,13 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE, client_sessi
             return
 
         # Ejecutar solo la llamada a get_wallet_token_balances
-        logger.debug(f"Iniciando llamada a Moralis para obtener balances para {user_id}...")
+        logger.debug(
+            f"Iniciando llamada a Moralis para obtener balances para {user_id}..."
+        )
         token_balances = await get_wallet_token_balances(wallet_address, client_session)
-        logger.debug(f"Llamada a Moralis get_wallet_token_balances completada para {user_id}.")
+        logger.debug(
+            f"Llamada a Moralis get_wallet_token_balances completada para {user_id}."
+        )
 
         if not token_balances:
             logger.info(
@@ -179,7 +452,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE, client_sessi
             return
 
         summary_lines = []
-        total_net_worth_usd = Decimal(0) # Initialize total net worth
+        total_net_worth_usd = Decimal(0)  # Initialize total net worth
 
         for token in token_balances:
             token_address = token.get("token_address")
@@ -189,7 +462,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE, client_sessi
             balance_raw = token.get("balance", "0")
             decimals = token.get("decimals", 18)
             symbol = token.get("symbol", "N/A")
-            usd_value = token.get("usd_value", 0) # Get USD value from the response
+            usd_value = token.get("usd_value", 0)  # Get USD value from the response
 
             try:
                 balance_decimal = Decimal(balance_raw) / (10**decimals)
@@ -210,8 +483,9 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE, client_sessi
             try:
                 total_net_worth_usd += Decimal(str(usd_value))
             except Exception as e:
-                logger.error(f"Error sumando usd_value para token {symbol}: {e}", exc_info=True)
-
+                logger.error(
+                    f"Error sumando usd_value para token {symbol}: {e}", exc_info=True
+                )
 
         non_zero_balances = [line for line in summary_lines if not line.endswith(": 0")]
 
@@ -254,7 +528,11 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE, client_sessi
         )
 
 
-async def check_deposits(update: Update, context: ContextTypes.DEFAULT_TYPE, client_session: aiohttp.ClientSession):
+async def check_deposits(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    client_session: aiohttp.ClientSession,
+):
     user_id = update.effective_user.id
     logger.info(f"Comando /check recibido de usuario {user_id}")
     try:
@@ -283,7 +561,9 @@ async def check_deposits(update: Update, context: ContextTypes.DEFAULT_TYPE, cli
             )
             return
 
-        deposits = await get_myst_deposits(wallet_address, token_addresses_to_monitor, client_session)
+        deposits = await get_myst_deposits(
+            wallet_address, token_addresses_to_monitor, client_session
+        )
         logger.debug(
             f"Depósitos obtenidos de Moralis para /check de {user_id}: {len(deposits)}"
         )
@@ -438,16 +718,24 @@ async def tokens_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             tracked_tokens_results = await session.execute(
-                select(UserToken.token_address).where(UserToken.user_id == user_id)
+                select(UserToken.token_address, UserToken.token_symbol).where(
+                    UserToken.user_id == user_id
+                )
             )
-            token_addresses = [token for token in tracked_tokens_results.scalars()]
-            logger.debug(f"Tokens monitorizados por {user_id}: {token_addresses}")
+            tracked_tokens_data = (
+                tracked_tokens_results.all()
+            )  # Fetch as list of (token_address, token_symbol) tuples
+            logger.debug(f"Tokens monitorizados por {user_id}: {tracked_tokens_data}")
 
-            if token_addresses:
+            if tracked_tokens_data:
                 token_list_msg = "Tokens monitorizados:\n"
-                for token_address in token_addresses:
+                for token_address, token_symbol in tracked_tokens_data:
+                    display_symbol = token_symbol if token_symbol else "UNKNOWN"
+                    escaped_display_symbol = escape_md2(display_symbol)
                     escaped_token_address = escape_md2(token_address)
-                    token_list_msg += f"\\- `{escaped_token_address}`\n"
+                    token_list_msg += (
+                        f"\\- *{escaped_display_symbol}*: `{escaped_token_address}`\n"
+                    )
                 await update.message.reply_markdown_v2(token_list_msg)
                 logger.info(
                     f"Comando /tokens ejecutado con éxito para usuario {user_id}."
@@ -466,35 +754,56 @@ async def tokens_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"Comando /help recibido de usuario {update.effective_user.id}")
-    help_message = (
-        "Comandos disponibles:\n"
-        "/start - Inicia el bot y muestra un mensaje de bienvenida.\n"
-        "/help - Muestra esta lista de comandos.\n"
-        "/setwallet <direccion> - Configura la dirección de tu wallet para monitorizar.\n"
-        "/wallet - Muestra tu dirección de wallet configurada.\n"
-        "/addtoken <direccion_contrato> - Añade un token ERC-20 para monitorizar.\n"
-        "/tokens - Muestra la lista de tokens que estás monitorizando.\n"
-        "/check - Comprueba manualmente si hay nuevos depósitos para tu wallet y tokens monitorizados.\n"
-        "/stats - Muestra un resumen de tus depósitos totales por token.\n"
-        "/reset - Resetea el almacenamiento de la última transacción vista (solo para pruebas)."
-    )
-    await update.message.reply_text(help_message)
-    logger.info(
-        f"Comando /help ejecutado con éxito para usuario {update.effective_user.id}."
-    )
-
-
 def get_handlers(client_session: aiohttp.ClientSession):
+    add_token_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler(
+                "addtoken", partial(add_token_start, client_session=client_session)
+            )
+        ],
+        states={
+            ADDTOKEN_CUSTOM_SYMBOL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_token_custom_symbol)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    remove_token_handler = ConversationHandler(
+        entry_points=[CommandHandler("removetoken", remove_token_start)],
+        states={
+            REMOVETOKEN_CONFIRM_ALL: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND, remove_all_tokens_confirm
+                )
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
     return [
         CommandHandler("start", start),
         CommandHandler("help", help_command),
         CommandHandler("setwallet", set_wallet),
         CommandHandler("wallet", wallet_command),
-        CommandHandler("addtoken", add_token),
+        add_token_handler,
+        remove_token_handler,
         CommandHandler("tokens", tokens_command),
         CommandHandler("check", partial(check_deposits, client_session=client_session)),
         CommandHandler("stats", partial(stats, client_session=client_session)),
         CommandHandler("reset", reset),
     ]
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"Comando /help recibido de usuario {update.effective_user.id}")
+
+    help_message_lines = ["Comandos disponibles:"]
+    for cmd_info in BOT_COMMANDS:
+        help_message_lines.append(f"/{cmd_info['command']} - {cmd_info['description']}")
+    help_message = "\n".join(help_message_lines)
+
+    await update.message.reply_text(help_message)
+    logger.info(
+        f"Comando /help ejecutado con éxito para usuario {update.effective_user.id}."
+    )
