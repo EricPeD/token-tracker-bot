@@ -12,14 +12,15 @@ from src.models import (
     AsyncSessionLocal,
     User,
     UserToken,
-    Transaction,
+    LastTx,
 )
-from src.watcher.storage import TxStorage
+from sqlalchemy import delete
 from src.watcher.moralis import (
-    get_myst_deposits,
     get_wallet_token_balances,
     get_token_metadata,
 )
+from src.services import check_and_process_deposits  # Importar el nuevo servicio
+from src.utils.decorators import require_wallet # Importar el decorador
 from src.utils.format import format_deposit_msg, escape_md2
 from sqlalchemy import select, func
 import re
@@ -121,11 +122,12 @@ async def set_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Error al guardar la wallet. Inténtalo de nuevo."
         )
 
-
+@require_wallet
 async def add_token_start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     client_session: aiohttp.ClientSession,
+    user: User, # Inyectado por el decorador
 ):
     user_id = update.effective_user.id
     logger.info(
@@ -146,13 +148,6 @@ async def add_token_start(
 
     try:
         async with AsyncSessionLocal() as session:
-            user = await session.get(User, user_id)
-            if not user:
-                await update.message.reply_text(
-                    "Primero debes configurar tu wallet con /setwallet."
-                )
-                return ConversationHandler.END
-
             existing_token = await session.get(UserToken, (user_id, token_address))
             if existing_token:
                 display_symbol = (
@@ -285,8 +280,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-async def remove_token_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+@require_wallet
+async def remove_token_start(update: Update, context: ContextTypes.DEFAULT_TYPE, user: User):
+    user_id = user.user_id # Usar el user_id del objeto User inyectado
     logger.info(
         f"Comando /removetoken (inicio conversación) recibido de usuario {user_id} con args: {context.args}"
     )
@@ -398,26 +394,19 @@ async def remove_all_tokens_confirm(update: Update, context: ContextTypes.DEFAUL
     return ConversationHandler.END
 
 
+@require_wallet
 async def stats(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     client_session: aiohttp.ClientSession,
+    user: User, # Inyectado por el decorador
 ):
-    user_id = update.effective_user.id
+    user_id = user.user_id
+    wallet_address = user.wallet_address # Usar la wallet del objeto User inyectado
     logger.info(f"Comando /stats recibido de usuario {user_id}")
     try:
-        wallet_address = ""
         token_addresses_to_monitor = set()
         async with AsyncSessionLocal() as session:
-            user = await session.get(User, user_id)
-            if not user or not user.wallet_address:
-                logger.info(f"Usuario {user_id} intentó /stats sin wallet configurada.")
-                await update.message.reply_text(
-                    "Primero debes configurar tu wallet con /setwallet."
-                )
-                return
-            wallet_address = user.wallet_address
-
             tracked_tokens_results = await session.execute(
                 select(UserToken.token_address).where(UserToken.user_id == user_id)
             )
@@ -504,9 +493,10 @@ async def stats(
         )
 
         # Añadir el valor neto total calculado localmente
+        # NOTA: Este valor es solo para los tokens monitorizados.
         try:
             formatted_net_worth = f"{total_net_worth_usd:,.2f}"
-            msg += f"\n\n*Valor Total Estimado \\(USD\\):* ${escape_md2(formatted_net_worth)}"
+            msg += f"\n\n*Valor Total Estimado \\(USD\\) \\(Solo monitorizados\\):* ${escape_md2(formatted_net_worth)}"
             logger.debug(
                 f"Valor neto formateado para {user_id}: ${formatted_net_worth}"
             )
@@ -535,107 +525,17 @@ async def check_deposits(
 ):
     user_id = update.effective_user.id
     logger.info(f"Comando /check recibido de usuario {user_id}")
+    await update.message.reply_text("Buscando nuevos depósitos...")
+
     try:
-        wallet_address = None
-        token_addresses_to_monitor = []
-        async with AsyncSessionLocal() as session:
-            user = await session.get(User, user_id)
-            if not user or not user.wallet_address:
-                logger.info(f"Usuario {user_id} intentó /check sin wallet configurada.")
-                await update.message.reply_text("Set wallet primero con /setwallet")
-                return
-            wallet_address = user.wallet_address
+        # Llamada al servicio centralizado
+        new_deposits = await check_and_process_deposits(user_id, client_session)
 
-            tracked_tokens_results = await session.execute(
-                select(UserToken.token_address).where(UserToken.user_id == user_id)
-            )
-            token_addresses_to_monitor = list(tracked_tokens_results.scalars())
-        logger.debug(
-            f"Tokens monitorizados para /check de {user_id}: {token_addresses_to_monitor}"
-        )
-
-        if not token_addresses_to_monitor:
-            logger.info(f"Usuario {user_id} intentó /check sin tokens monitorizados.")
-            await update.message.reply_text(
-                "No estás monitorizando ningún token. Usa /addtoken <contract_address> para añadir uno."
-            )
-            return
-
-        deposits = await get_myst_deposits(
-            wallet_address, token_addresses_to_monitor, client_session
-        )
-        logger.debug(
-            f"Depósitos obtenidos de Moralis para /check de {user_id}: {len(deposits)}"
-        )
-        if not deposits:
+        if new_deposits:
             logger.info(
-                f"No se encontraron depósitos en Moralis para /check de {user_id}."
+                f"Enviando notificaciones para /check de {user_id}: {len(new_deposits)}"
             )
-            await update.message.reply_text(
-                "No se encontraron depósitos para los tokens monitorizados."
-            )
-            return
-
-        truly_new_deposits = []
-        async with AsyncSessionLocal() as session:
-            async with session.begin():
-                storage = TxStorage(user_id=user_id)
-                last_known_timestamp = await storage.load_last(session)
-                logger.debug(
-                    f"Último timestamp conocido para /check de {user_id}: {last_known_timestamp}"
-                )
-
-                candidate_deposits = [
-                    d
-                    for d in deposits
-                    if not last_known_timestamp
-                    or d["block_timestamp"] > last_known_timestamp
-                ]
-                logger.debug(
-                    f"Depósitos candidatos para /check de {user_id}: {len(candidate_deposits)}"
-                )
-
-                if candidate_deposits:
-                    existing_hashes_results = await session.execute(
-                        select(Transaction.tx_hash).where(
-                            Transaction.user_id == user_id,
-                            Transaction.tx_hash.in_(
-                                [d["hash"] for d in candidate_deposits]
-                            ),
-                        )
-                    )
-                    existing_hashes = {h for h in existing_hashes_results.scalars()}
-                    truly_new_deposits = [
-                        d
-                        for d in candidate_deposits
-                        if d["hash"] not in existing_hashes
-                    ]
-                    logger.info(
-                        f"Depósitos verdaderamente nuevos para /check de {user_id}: {len(truly_new_deposits)}"
-                    )
-
-                if truly_new_deposits:
-                    latest = max(d["block_timestamp"] for d in truly_new_deposits)
-                    await storage.save_last(session, latest)
-
-                    for d in truly_new_deposits:
-                        new_tx = Transaction(
-                            user_id=user_id,
-                            token_address=d.get("token_address", ""),
-                            token_symbol=d.get("token_symbol", "UNKNOWN"),
-                            amount=d.get("amount_raw", "0"),
-                            tx_hash=d.get("hash", ""),
-                            block_timestamp=d.get("block_timestamp", ""),
-                            from_address=d.get("from_address", ""),
-                        )
-                        session.add(new_tx)
-                    logger.info(f"Nuevos depósitos guardados para /check de {user_id}.")
-
-        if truly_new_deposits:
-            logger.info(
-                f"Enviando notificaciones para /check de {user_id}: {len(truly_new_deposits)}"
-            )
-            for d in truly_new_deposits:
+            for d in new_deposits:
                 msg = format_deposit_msg(d)
                 await update.message.reply_markdown_v2(msg)
         else:
@@ -650,7 +550,7 @@ async def check_deposits(
             exc_info=True,
         )
         await update.message.reply_text(
-            "❌ Error al comprobar los depósitos. La API de Moralis podría estar inaccesible o la wallet es incorrecta."
+            "❌ Error al comprobar los depósitos. La API podría estar inaccesible."
         )
 
 
@@ -660,8 +560,9 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         async with AsyncSessionLocal() as session:
             async with session.begin():
-                storage = TxStorage(user_id=user_id)
-                await storage.reset(session)
+                await session.execute(
+                    delete(LastTx).where(LastTx.user_id == user_id)
+                )
         logger.info(f"Storage reseteado para {user_id}.")
         await update.message.reply_text(
             "🔄 Storage reseteado\n"
@@ -702,21 +603,12 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-async def tokens_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+@require_wallet
+async def tokens_command(update: Update, context: ContextTypes.DEFAULT_TYPE, user: User):
+    user_id = user.user_id # Usar el user_id del objeto User inyectado
     logger.info(f"Comando /tokens recibido de usuario {user_id}")
     try:
         async with AsyncSessionLocal() as session:
-            user = await session.get(User, user_id)
-            if not user:
-                logger.info(
-                    f"Usuario {user_id} intentó /tokens sin wallet configurada."
-                )
-                await update.message.reply_text(
-                    "Primero debes configurar tu wallet con /setwallet."
-                )
-                return
-
             tracked_tokens_results = await session.execute(
                 select(UserToken.token_address, UserToken.token_symbol).where(
                     UserToken.user_id == user_id

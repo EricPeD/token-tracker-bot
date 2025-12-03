@@ -27,7 +27,7 @@ MORALIS_BASE = "https://deep-index.moralis.io/api/v2.2"
         | retry_if_exception_type(asyncio.TimeoutError)
     ),
 )
-async def get_myst_deposits(
+async def get_wallet_deposits(
     wallet_address: str,
     token_addresses_to_monitor: List[str],
     client_session: aiohttp.ClientSession,
@@ -39,8 +39,8 @@ async def get_myst_deposits(
     """
     url = f"{MORALIS_BASE}/wallets/{wallet_address.lower()}/history"
     headers = {"X-API-Key": settings.moralis_api_key, "accept": "application/json"}
-    logger.debug(f"Moralis - get_myst_deposits: Request URL: {url}")
-    logger.debug(f"Moralis - get_myst_deposits: Headers: {headers}")
+    logger.debug(f"Moralis - get_wallet_deposits: Request URL: {url}")
+    logger.debug(f"Moralis - get_wallet_deposits: Headers: {headers}")
 
     all_transactions = []
     cursor = None
@@ -56,16 +56,16 @@ async def get_myst_deposits(
         }
         if cursor:
             params["cursor"] = cursor
-        logger.debug(f"Moralis - get_myst_deposits: Request Params: {params}")
+        logger.debug(f"Moralis - get_wallet_deposits: Request Params: {params}")
 
         async with client_session.get(
             url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=30)
         ) as resp:
-            logger.debug(f"Moralis - get_myst_deposits: Response Status: {resp.status}")
+            logger.debug(f"Moralis - get_wallet_deposits: Response Status: {resp.status}")
             if resp.status != 200:
                 text = await resp.text()
                 logger.error(
-                    f"Moralis API error en get_myst_deposits {resp.status}: {text}",
+                    f"Moralis API error en get_wallet_deposits {resp.status}: {text}",
                     exc_info=True,
                 )
                 raise ClientResponseError(
@@ -78,12 +78,12 @@ async def get_myst_deposits(
             try:
                 data = await resp.json()
                 logger.debug(
-                    f"Moralis - get_myst_deposits: Response Data: {json.dumps(data)}"
+                    f"Moralis - get_wallet_deposits: Response Data: {json.dumps(data)}"
                 )
             except json.JSONDecodeError as e:
                 text = await resp.text()
                 logger.error(
-                    f"Error decodificando JSON de Moralis en get_myst_deposits: {e}. Respuesta: {text}",
+                    f"Error decodificando JSON de Moralis en get_wallet_deposits: {e}. Respuesta: {text}",
                     exc_info=True,
                 )
                 raise ClientError("Error de formato JSON de Moralis") from e
