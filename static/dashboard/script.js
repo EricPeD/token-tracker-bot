@@ -1,4 +1,4 @@
-const API_BASE_URL = ''; // carga desde fastAPI
+const API_BASE_URL = ''; // Now served from the same origin as FastAPI
 
 // --- Telegram Auth Callback (Must be global for widget) ---
 window.onTelegramAuth = async function(user) {
@@ -21,8 +21,7 @@ window.onTelegramAuth = async function(user) {
 
         if (data.access_token) {
             localStorage.setItem('access_token', data.access_token);
-            localStorage.setItem('user_id', data.user_id); // Store user_id
-            // user.first_name is also useful for display
+            localStorage.setItem('user_id', data.user_id);
             localStorage.setItem('user_first_name', user.first_name || `Usuario ${user.id}`);
             console.log("Token de acceso almacenado y usuario logueado.");
             alert('¡Login exitoso! Bienvenido, ' + user.first_name + '.');
@@ -63,7 +62,52 @@ async function fetchAuthenticated(endpoint, options = {}) {
     return response;
 }
 
-// --- Data Fetching and Display ---
+
+// --- Display Functions ---
+
+function displayTrackedTokens(tokens) {
+    const listElement = document.getElementById('tracked-tokens-list');
+    if (!listElement) return;
+
+    if (tokens.length === 0) {
+        listElement.innerHTML = '<li>No estás monitorizando ningún token.</li>';
+        return;
+    }
+
+    listElement.innerHTML = tokens.map(token => {
+        const symbol = String(token.token_symbol || "UNKNOWN").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const address = String(token.token_address).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        return `<li><strong>${symbol}</strong>: <code>${address}</code></li>`;
+    }).join('');
+}
+
+function displayTrackedTransactions(transactions) {
+    const listElement = document.getElementById('tracked-transactions');
+    if (!listElement) return;
+
+    if (transactions.length === 0) {
+        listElement.innerHTML = '<li>No hay transacciones recientes para mostrar.</li>';
+        return;
+    }
+
+    listElement.innerHTML = transactions.map(tx => {
+        const symbol = String(tx.token_symbol || "UNKNOWN").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const amount = String(tx.amount).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const txHash = String(tx.tx_hash).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const fromAddress = String(tx.from_address).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const timestamp = new Date(tx.block_timestamp).toLocaleString();
+
+        return `<li>
+            <strong>${symbol}</strong>: ${amount}
+            <br>Desde: <code>${fromAddress.substring(0, 6)}...${fromAddress.substring(fromAddress.length - 4)}</code>
+            <br>Tx: <a href="https://polygonscan.com/tx/${txHash}" target="_blank">${txHash.substring(0, 6)}...${txHash.substring(txHash.length - 4)}</a>
+            <br>Fecha: ${timestamp}
+        </li>`;
+    }).join('');
+}
+
+
+// --- Data Fetching Functions ---
 
 async function fetchGeneralStats() {
     try {
@@ -91,20 +135,17 @@ async function fetchTokensTracked() {
     }
 }
 
-function displayTrackedTokens(tokens) {
-    const listElement = document.getElementById('tracked-tokens-list');
-    if (!listElement) return;
-
-    if (tokens.length === 0) {
-        listElement.innerHTML = '<li>No estás monitorizando ningún token.</li>';
-        return;
+async function fetchTransactionsTracked() {
+    try {
+        const response = await fetchAuthenticated('/api/me/transactions');
+        const transactions = await response.json();
+        displayTrackedTransactions(transactions);
+    } catch (error) {
+        console.error('Error fetching transactions for tracked tokens:', error);
+        if(document.getElementById('tracked-transactions')) {
+            document.getElementById('tracked-transactions').innerHTML = '<li>Error al cargar las últimas transacciones</li>';
+        }
     }
-
-    listElement.innerHTML = tokens.map(token => {
-        const symbol = String(token.token_symbol).replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        const address = String(token.token_address).replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        return `<li><strong>${symbol}</strong>: <code>${address}</code></li>`;
-    }).join('');
 }
 
 
@@ -121,13 +162,16 @@ function checkLoginStatus() {
     const logoutButton = document.getElementById('logout-button');
     const telegramLoginButtonContainer = document.getElementById('telegram-login-button-container');
 
+    // Ensure general stats are always fetched (since /api/stats is public)
+    fetchGeneralStats();
+
     if (token && userId) {
         loginView.style.display = 'none';
         authenticatedView.style.display = 'block';
         loggedInUserInfoSpan.textContent = userFirstName || `Usuario ID: ${userId}`;
         logoutButton.addEventListener('click', logout);
-        fetchGeneralStats();
         fetchTokensTracked();
+        fetchTransactionsTracked();
     } else {
         loginView.style.display = 'block';
         authenticatedView.style.display = 'none';

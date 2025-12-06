@@ -8,5 +8,5 @@ notes-token-tracker-bot
 GEMINI.md
 tx_storage.db
 commit_message.txt
-bot_activity.log
 logoXD.jpg
+logs/*

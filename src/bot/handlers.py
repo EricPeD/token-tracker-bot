@@ -20,7 +20,7 @@ from src.watcher.moralis import (
     get_token_metadata,
 )
 from src.services import check_and_process_deposits  # Importar el nuevo servicio
-from src.utils.decorators import require_wallet # Importar el decorador
+from src.utils.decorators import require_wallet  # Importar el decorador
 from src.utils.format import format_deposit_msg, escape_md2
 from sqlalchemy import select, func
 import re
@@ -122,12 +122,13 @@ async def set_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Error al guardar la wallet. Inténtalo de nuevo."
         )
 
+
 @require_wallet
 async def add_token_start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     client_session: aiohttp.ClientSession,
-    user: User, # Inyectado por el decorador
+    user: User,  # Inyectado por el decorador
 ):
     user_id = update.effective_user.id
     logger.info(
@@ -281,8 +282,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @require_wallet
-async def remove_token_start(update: Update, context: ContextTypes.DEFAULT_TYPE, user: User):
-    user_id = user.user_id # Usar el user_id del objeto User inyectado
+async def remove_token_start(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user: User
+):
+    user_id = user.user_id  # Usar el user_id del objeto User inyectado
     logger.info(
         f"Comando /removetoken (inicio conversación) recibido de usuario {user_id} con args: {context.args}"
     )
@@ -399,10 +402,10 @@ async def stats(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     client_session: aiohttp.ClientSession,
-    user: User, # Inyectado por el decorador
+    user: User,  # Inyectado por el decorador
 ):
     user_id = user.user_id
-    wallet_address = user.wallet_address # Usar la wallet del objeto User inyectado
+    wallet_address = user.wallet_address  # Usar la wallet del objeto User inyectado
     logger.info(f"Comando /stats recibido de usuario {user_id}")
     try:
         token_addresses_to_monitor = set()
@@ -560,9 +563,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         async with AsyncSessionLocal() as session:
             async with session.begin():
-                await session.execute(
-                    delete(LastTx).where(LastTx.user_id == user_id)
-                )
+                await session.execute(delete(LastTx).where(LastTx.user_id == user_id))
         logger.info(f"Storage reseteado para {user_id}.")
         await update.message.reply_text(
             "🔄 Storage reseteado\n"
@@ -604,8 +605,10 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @require_wallet
-async def tokens_command(update: Update, context: ContextTypes.DEFAULT_TYPE, user: User):
-    user_id = user.user_id # Usar el user_id del objeto User inyectado
+async def tokens_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user: User
+):
+    user_id = user.user_id  # Usar el user_id del objeto User inyectado
     logger.info(f"Comando /tokens recibido de usuario {user_id}")
     try:
         async with AsyncSessionLocal() as session:

@@ -9,17 +9,23 @@
 <body>
     <div class="container">
         <h1>Dashboard de Token Tracker Bot</h1>
+        
+        <div class="stats-section"> <!-- Mostrar siempre, aun sin iniciar sesion -->
+            <h2>Estadísticas Generales</h2>
+            <p>Total de Usuarios: <span id="total-users">Cargando...</span></p>
+            <p>Total de Transacciones: <span id="total-transactions">Cargando...</span></p>
+        </div>
 
         <div id="authenticated-view" style="display:none;">
             <p>Bienvenido, <span id="logged-in-user-info"></span>! <button id="logout-button">Cerrar Sesión</button></p>
-            <div class="stats-section">
-                <h2>Estadísticas Generales</h2>
-                <p>Total de Usuarios: <span id="total-users">Cargando...</span></p>
-                <p>Total de Transacciones: <span id="total-transactions">Cargando...</span></p>
-            </div>
             <div class="tokens-section">
                 <h2>Tus Tokens Monitorizados</h2>
                 <ul id="tracked-tokens-list">
+                    <li>Cargando...</li>
+                </ul>
+                
+                <h2>Tus Ultimas Transacciones</h2>
+                <ul id="tracked-transactions">
                     <li>Cargando...</li>
                 </ul>
             </div>

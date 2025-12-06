@@ -61,7 +61,9 @@ async def get_wallet_deposits(
         async with client_session.get(
             url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=30)
         ) as resp:
-            logger.debug(f"Moralis - get_wallet_deposits: Response Status: {resp.status}")
+            logger.debug(
+                f"Moralis - get_wallet_deposits: Response Status: {resp.status}"
+            )
             if resp.status != 200:
                 text = await resp.text()
                 logger.error(
